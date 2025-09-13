@@ -3318,6 +3318,10 @@ bool Recompiler::Recompile(
         break;
     }
 
+    case PPC_INST_VADDUHS:
+		println("\t_mm_store_si128((__m128i*){}.u16, _mm_adds_epu16(_mm_load_si128((__m128i*){}.u16), _mm_load_si128((__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+	break;
+        
     case PPC_INST_VCMPEQUH:
         println("\tsimd::store_u16({}.u16, simd::cmpeq_i16(simd::load_u16({}.u16), simd::load_u16({}.u16)));",
             v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
@@ -3816,3 +3820,4 @@ void Recompiler::SaveCurrentOutData(const std::string_view& name)
         out.clear();
     }
 }
+
