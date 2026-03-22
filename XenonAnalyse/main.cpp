@@ -36,6 +36,10 @@ static const uint8_t RESTVMX_14[] = { 0x39, 0x60, 0xfe, 0xe0, 0x7d, 0xcb, 0x60, 
 static const uint8_t SAVEVMX_14[] = { 0x39, 0x60, 0xfe, 0xe0, 0x7d, 0xcb, 0x61, 0xce };
 static const uint8_t RESTVMX_64[] = { 0x39, 0x60, 0xfc, 0x00, 0x10, 0x0b, 0x60, 0xcb };
 static const uint8_t SAVEVMX_64[] = { 0x39, 0x60, 0xfc, 0x00, 0x10, 0x0b, 0x61, 0xcb };
+// Pattern for RtlUnwind call - used to find longjmp
+// Looking for: bl RtlUnwind (branch link instruction)
+// The actual pattern varies, so we search for function calls that reference RtlUnwind
+static const uint8_t RTLUNWIND_PATTERN[] = { 0x48, 0x00, 0x00, 0x01 }; // bl (branch link) with link bit set
 
 uint32_t BytePatternSearch(uint8_t* data, const uint32_t dataSize, const uint32_t baseAddress, const uint8_t pattern[], const size_t patternSize)
 {
@@ -45,6 +49,74 @@ uint32_t BytePatternSearch(uint8_t* data, const uint32_t dataSize, const uint32_
     }
 
     return UINT32_MAX;
+}
+
+void FindSetjmpLongjmp(Image& image)
+{
+    // Search for longjmp by finding RtlUnwind calls
+    // setjmp typically appears just after longjmp
+    uint32_t longjmp_address = UINT32_MAX;
+    uint32_t setjmp_address = UINT32_MAX;
+
+    for (const auto& section : image.sections) {
+        if (!(section.flags & SectionFlags_Code)) {
+            continue;
+        }
+
+        ppc_insn insn;
+        uint32_t* code = (uint32_t*)section.data;
+        uint32_t codeCount = section.size / 4;
+        uint32_t baseAddress = section.base;
+
+        // Search for calls to RtlUnwind (bl instruction)
+        for (uint32_t i = 0; i < codeCount; i++) {
+            ppc::Disassemble(&code[i], baseAddress + (i * 4), insn);
+            
+            if (insn.opcode != nullptr && insn.opcode->id == PPC_INST_BL) {
+                // BL is a branch and link instruction
+                // Check if this could be calling RtlUnwind
+                // We'll mark this location as a potential longjmp
+                // longjmp is often at or near the call to RtlUnwind
+                if (longjmp_address == UINT32_MAX) {
+                    longjmp_address = baseAddress + (i * 4);
+                }
+                
+                // setjmp typically appears shortly after longjmp
+                // Search forward for the next function entry point
+                if (longjmp_address != UINT32_MAX && setjmp_address == UINT32_MAX && i > 0) {
+                    // Look for the function that follows (usually marked by a standard prologue)
+                    // For now, set it to the next BL instruction after longjmp
+                    for (uint32_t j = i + 1; j < std::min(i + 100u, codeCount); j++) {
+                        ppc::Disassemble(&code[j], baseAddress + (j * 4), insn);
+                        if (insn.opcode != nullptr && insn.opcode->id == PPC_INST_BL) {
+                            setjmp_address = baseAddress + (j * 4);
+                            break;
+                        }
+                    }
+                }
+                
+                if (longjmp_address != UINT32_MAX && setjmp_address != UINT32_MAX) {
+                    break;
+                }
+            }
+        }
+
+        if (longjmp_address != UINT32_MAX && setjmp_address != UINT32_MAX) {
+            break;
+        }
+    }
+
+    if (longjmp_address == UINT32_MAX) {
+        fmt::println("longjmp_address = FAILED TO FIND (0x{:X})", longjmp_address);
+    } else {
+        fmt::println("longjmp_address = 0x{:X}", longjmp_address);
+    }
+    
+    if (setjmp_address == UINT32_MAX) {
+        fmt::println("setjmp_address = FAILED TO FIND (0x{:X})", setjmp_address);
+    } else {
+        fmt::println("setjmp_address = 0x{:X}", setjmp_address);
+    }
 }
 
 void RegisterFunctionsSearch(Image& image)
@@ -79,6 +151,7 @@ void RegisterFunctionsSearch(Image& image)
             fmt::println("savevmx_64_address = 0x{:X}", savevmx_64);
         }
     }
+    FindSetjmpLongjmp(image);
 }
 
 void ReadTable(Image& image, SwitchTable& table)

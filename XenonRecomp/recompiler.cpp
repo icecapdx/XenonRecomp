@@ -90,6 +90,12 @@ bool Recompiler::LoadConfig(const std::string_view& configFilePath)
         }
     }
 
+    if (file.empty())
+    {
+        fmt::println("ERROR: Unable to load input file");
+        return false;
+    }
+
     image = Image::ParseImage(file.data(), file.size());
     return true;
 }
@@ -3792,6 +3798,17 @@ void Recompiler::SaveCurrentOutData(const std::string_view& name)
             directoryPath += "/";
 
         std::string filePath = fmt::format("{}{}/{}", directoryPath, config.outDirectoryPath, name.empty() ? cppName : name);
+        std::filesystem::path filePathFs(filePath);
+        std::error_code ec;
+        if (!std::filesystem::exists(filePathFs.parent_path(), ec))
+        {
+            std::filesystem::create_directories(filePathFs.parent_path(), ec);
+            if (ec)
+            {
+                fmt::println("ERROR: Unable to create output directory: {}", ec.message());
+            }
+        }
+
         FILE* f = fopen(filePath.c_str(), "rb");
         if (f)
         {
@@ -3813,8 +3830,15 @@ void Recompiler::SaveCurrentOutData(const std::string_view& name)
         if (shouldWrite)
         {
             f = fopen(filePath.c_str(), "wb");
-            fwrite(out.data(), 1, out.size(), f);
-            fclose(f);
+            if (!f)
+            {
+                fmt::println("ERROR: Unable to open file for writing: {}", filePath);
+            }
+            else
+            {
+                fwrite(out.data(), 1, out.size(), f);
+                fclose(f);
+            }
         }
 
         out.clear();
